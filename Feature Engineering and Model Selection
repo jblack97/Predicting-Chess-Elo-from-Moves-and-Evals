@@ -373,9 +373,6 @@ X.columns = list(range(len(X.columns)))
 sns.heatmap(X.corr())
 
 
-pca = PCA()
-
-transformed_X = pd.DataFrame(pca.fit_transform(X))
 
 
 
@@ -384,8 +381,6 @@ x_test = X.loc[20000:,:]
 y_train = y.loc[:20000,:]
 y_test = y.loc[20000:,:]
 
-x_train_transformed = transformed_X.loc[ :20000,:]
-x_test_transformed = transformed_X.loc[20000:,:]
 
 
 
@@ -400,15 +395,6 @@ from sklearn.ensemble import AdaBoostRegressor
 from sklearn.ensemble import RandomForestRegressor
 
 xgb = XGBRegressor(max_depth = 4, n_estimators = 500, learning_rate = 0.05)
-
-
-
-
-
-x_train.drop(to_drop, axis = 1, inplace = True)
-x_test.drop(to_drop, axis = 1, inplace = True)
-
-
 en = ElasticNet(alpha = 0,l1_ratio = .1, max_iter = 500)
 ada = AdaBoostRegressor(n_estimators = 250, learning_rate = .05)
 rf = RandomForestRegressor(n_estimators = 250)
@@ -437,31 +423,6 @@ print('rf error is ' + str(np.sqrt(mse(rfpreds,y_test.white))))
 
 print('xgb error is ' + str(np.sqrt(mse(xgbpreds,y_test.white))))
 
-
-en.fit(x_train_transformed,y_train.white)
-enpreds_transformed = en.predict(x_test_transformed)
-
-ada.fit(x_train_transformed,y_train.white)
-adapreds_transformed = ada.predict(x_test_transformed)
-
-rf.fit(x_train_transformed,y_train.white)
-rfpreds_transformed = rf.predict(x_test_transformed)
-
-
-xgb.fit(x_train_transformed,y_train.white)
-xgbpreds_transformed = xgb.predict(x_test_transformed)
-
-
-
-print('en error is ' + str(np.sqrt(mse(enpreds_transformed,y_test.white))))
-
-
-
-print('ada error is ' + str(np.sqrt(mse(adapreds_transformed,y_test.white))))
-
-print('rf error is ' + str(np.sqrt(mse(rfpreds_transformed,y_test.white))))
-
-print('xgb error is ' + str(np.sqrt(mse(xgbpreds_transformed,y_test.white))))
 
 
 
