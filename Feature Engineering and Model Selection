@@ -1,0 +1,519 @@
+import numpy as np
+import pandas as pd 
+import matplotlib.pyplot as plt 
+import statistics as st
+import pickle
+from sklearn.preprocessing import RobustScaler
+
+import seaborn as sns
+
+RS = RobustScaler()
+
+
+
+data1 = pd.read_pickle('chess_data.pkl')
+
+#removing errors 
+data1.loc[13683, 'result'] = 0.5
+data1.loc[15846, 'result'] = 0
+data1.loc[33094,'result'] = 1
+white= [float(i) if not i == 'None' else i for i in data1['white']]
+black= [float(i) if not i == 'None' else i for i in data1['black']]
+
+
+data1.white = white 
+data1.black = black    
+
+#Feature Engineering
+
+meanElo = [(i+j)/2 if not i == 'None' else 'None' for i, j in zip(data1.white, data1.black)]
+
+
+eloDiff = [i-j if not i == 'None' else 'None' for i, j in zip(data1.white, data1.black)]
+
+data1 = pd.concat([data1,pd.Series(meanElo), pd.Series(eloDiff)], axis = 1)
+data1.rename(columns = {0: 'meanElo', 1: 'diffElo'}, inplace = True)
+
+
+lenmoves = [len(i)-1 for i in data1.moves]
+
+lenmoves = pd.Series(lenmoves)
+
+data1 = pd.concat([data1,lenmoves], axis = 1)
+
+data1.rename(columns = {0:'lengths'}, inplace = True)
+
+#will clip elo to avoid skew
+clippedElo = []
+
+
+for i in data1.evals:
+    clippedElo.append((pd.Series(i)).clip(-400,400))
+
+data1.evals = clippedElo
+
+
+
+mean_data = pd.DataFrame(data1.lengths)
+
+#will have a lot of features so want to organise them in a general class, and divide into features based on the moves of the game, and then features based on the evals of the moves
+
+
+class Features:
+    def __init__(self, name, data):
+        self.name = name
+        self.data =  data
+    def addtodata(self):
+            matrix.data = pd.concat([matrix.data, pd.Series(self.data)], axis = 1)
+            matrix.data.rename(columns = {0:self.name}, inplace = True)
+        
+    def removefromdata(self):
+        matrix.drop(self.name, axis = 1, inplace = True)
+    
+
+class EvalFeatures(Features):
+    def __init__(self, name, data):
+        super().__init__(name, data)
+        self.std = []
+        for i in self.data:
+            if i != []:
+                self.std.append(np.std(i))
+            else:
+                self.std.append(None)
+        self.std = pd.Series(self.std) 
+        self.std.fillna(np.median(self.std.dropna()), inplace = True)
+        self.median = []
+        for i in self.data:
+            if i != []:
+                self.median.append(np.median(i))
+            else:
+                self.median.append(None)
+        self.median = pd.Series(self.median) 
+        self.median.fillna(np.median(self.median.dropna()), inplace = True)
+        self.maximum = []
+        for i in self.data:
+             if i != []:
+                self.maximum.append(np.max(i))
+             else:
+                self.maximum.append(None)
+        self.maximum = pd.Series(self.maximum) 
+        self.maximum.fillna(np.median(self.maximum.dropna()), inplace = True)
+        self.minimum = []
+        for i in self.data:
+             if i != []:
+                self.minimum.append(np.min(i))
+             else:
+                self.minimum.append(None)
+        self.minimum = pd.Series(self.minimum) 
+        self.minimum.fillna(np.median(self.minimum.dropna()), inplace = True)    
+    def addtodata(self):
+            matrix.data = pd.concat([matrix.data, pd.Series(self.std),pd.Series(self.median),pd.Series(self.maximum),pd.Series(self.minimum)], axis = 1)
+            matrix.data.rename(columns = {0 : self.name + '_std',1 : self.name +'_med', 2 : self.name + '_max', 3 : self.name +'_min'}, inplace = True)
+    def addtodataMean(self):
+            means.data = pd.concat([means.data, pd.Series(self.std),pd.Series(self.median),pd.Series(self.maximum),pd.Series(self.minimum)], axis = 1)
+            means.data.rename(columns = {0 : self.name + '_std',1 : self.name +'_med', 2 : self.name + '_max', 3 : self.name +'_min'}, inplace = True)
+    
+    @staticmethod
+    def partitiondiffs(pieces, eval_cutoff = 10000, first_move = 0, last_move = 1000):
+        minuses = []
+        if pieces == 'white':
+            for i in matrix.data.evals:
+                avg = []
+                if len(i) > first_move:
+                    for j in range(first_move, (min(len(i), last_move))):
+                        if (j%2 == 0) & (j !=0):
+                            if (-(eval_cutoff) < i[j] < eval_cutoff):
+                                avg.append(i[j] - i[j-1])
+            
+                minuses.append(avg)
+            minuses = pd.Series(minuses)                
+            return minuses
+            #return minuses.fillna(np.median(minuses).dropna()) 
+        
+        elif pieces == 'black':
+            for i in matrix.data.evals:
+                avg = []
+                if len(i) > first_move:
+                    for j in range(first_move, (min(len(i), last_move))):
+                        if (j%2 != 0):
+                            if (-(eval_cutoff) < i[j] < eval_cutoff):
+                                avg.append(-1*(i[j] - i[j-1]))
+                minuses.append(avg)
+            minuses = pd.Series(minuses)                
+            return minuses
+        
+class MoveFeatures(Features):
+    def __init__(self, name, data):
+        super().__init__(name, data)
+        self.queenw, self.queenb = MoveFeatures.firstmove('Q')
+        self.kingw, self.kingb = MoveFeatures.firstmove('K')
+        self.checkw, self.checkb = MoveFeatures.firstmove('+')  
+    def addtodata1(self):
+            matrix.data = pd.concat([matrix.data, pd.Series(self.queenw),pd.Series(self.queenb),pd.Series(self.kingw),pd.Series(self.kingb), pd.Series(self.checkw),pd.Series(self.checkb)], axis = 1)
+            matrix.data.rename(columns = {0 : 'queenw',1 : 'queenb', 
+                                          2 : 'kingw', 3 : 'kingb',4 : 'checkw', 
+                                          5 : 'checkb'}, inplace = True)
+    @staticmethod
+    def firstmove(piece):
+        white = []
+        black = []
+        for i in matrix.data.moves:
+            for j in range(len(i)):
+                if j == (len(i) -1):
+                    white.append(j)
+                if (piece in i[j]) & (j%2 == 0):
+                    white.append(j)
+                    break
+        
+    
+        for i in matrix.data.moves:
+            for j in range(len(i)):
+                if j == (len(i) -1):
+                    black.append(j)
+                if (piece in i[j]) & (j%2 != 0):
+                    black.append(j)
+                    break  
+        return white,black
+    @staticmethod
+    def goodmovecounts(colour, threshold, result, move):
+        count = []
+        if colour == 'white':
+            for i in matrix.data.evals:
+                moves = 0
+                if len(i) >0: 
+                    for j in range(len(i)):                   
+                        if (j%2 == 0) & (j !=0):
+                            if move == 'good':
+                                if i[j] - i[j-1] > threshold:
+                                    moves+=1
+                            elif move == 'bad':
+                                if i[j] - i[j-1] < threshold:
+                                    moves+=1
+                    if result == 'count':
+                        count.append(moves)
+                    else:
+                        count.append(moves/(len(i)/2))
+                else: 
+                    count.append(None)                
+        if colour == 'black':
+            for i in matrix.data.evals:
+                moves = 0
+                if len(i) >0: 
+                    for j in range(len(i)):
+                        if (j%2 != 0):
+                            if move == 'good':
+                                if i[j] - i[j-1] < threshold:
+                                    moves+=1
+                            elif move == 'bad':
+                                if i[j] - i[j-1] > threshold:
+                                    moves+=1
+                    if result == 'count':
+                        count.append(moves)
+                    else:
+                        count.append(moves/(len(i)/2))
+                else: 
+                    count.append(None)
+        return pd.Series(count)
+    
+    
+matrix = Features('matrix', data1)
+
+
+
+diffs = []
+for i in matrix.data.evals:
+    each_diff = []
+    for j in range(len(i)):
+        if j !=0:
+            each_diff.append(i[j] - i[j-1])
+    diffs.append(each_diff)
+
+absdiffs = []
+for i in diffs:
+    eachabsdiff = []
+    for j in range(len(i)):
+        eachabsdiff.append(abs(i[j]))
+    absdiffs.append(eachabsdiff)
+
+
+
+diffsw = []
+for i in matrix.data.evals:
+    each_diff = []
+    for j in range(len(i)):
+        if j !=0 and j%2 == 0:
+            each_diff.append(i[j] - i[j-1])
+    diffsw.append(each_diff)
+
+diffsb = []
+for i in matrix.data.evals:
+    each_diff = []
+    for j in range(len(i)):
+        if j%2 !=0:
+            each_diff.append(i[j] - i[j-1])
+    diffsb.append(each_diff)
+
+means = Features('means', mean_data)
+deltas = EvalFeatures('delta', diffs)
+absdeltas = EvalFeatures('absdeltas', absdiffs)
+deltas.addtodata()
+absdeltas.addtodataMean()
+
+deltasw= EvalFeatures('deltasw', diffsw)
+deltasw.addtodata()
+deltasb = EvalFeatures('deltasb', diffsb)
+deltasb.addtodata()
+
+#model error seems to decrease when the game is divided into partitions for the eval features
+#this makes sense intuitively as variance in the position evaluation in the opening should be more indicative of a lower standard of play than in the middlegame
+
+deltaw1 = EvalFeatures('deltaw1',EvalFeatures.partitiondiffs('white', first_move = 0, last_move = 20))
+deltaw1.addtodata()
+deltaw2 = EvalFeatures('deltaw2',EvalFeatures.partitiondiffs('white', first_move = 21, last_move = 40))
+deltaw2.addtodata()
+deltaw3 = EvalFeatures('deltaw3',EvalFeatures.partitiondiffs('white', first_move = 41, last_move = 60))
+deltaw3.addtodata()
+deltaw4 = EvalFeatures('deltaw4',EvalFeatures.partitiondiffs('white', first_move = 61, last_move = 90))
+deltaw4.addtodata()
+deltaw5 = EvalFeatures('deltaw5',EvalFeatures.partitiondiffs('white', first_move = 91))
+deltaw5.addtodata()
+
+deltab1 = EvalFeatures('deltab1',EvalFeatures.partitiondiffs('black', first_move = 0, last_move = 20))
+deltab1.addtodata()
+deltab2 = EvalFeatures('deltab2',EvalFeatures.partitiondiffs('black', first_move = 21, last_move = 40))
+deltab2.addtodata()
+deltab3 = EvalFeatures('deltab3',EvalFeatures.partitiondiffs('black', first_move = 41, last_move = 60))
+deltab3.addtodata()
+deltab4 = EvalFeatures('deltab4',EvalFeatures.partitiondiffs('black', first_move = 61, last_move = 90))
+deltab4.addtodata()
+deltab5 = EvalFeatures('deltab5',EvalFeatures.partitiondiffs('black', first_move = 91))
+deltab5.addtodata()
+
+moves = MoveFeatures('moves', matrix.data.moves)
+moves.addtodata1()
+
+goodmovesw = Features('goodmovesw',MoveFeatures.goodmovecounts('white', -10, 'share','good'))
+goodmovesb = Features('goodmovesb',MoveFeatures.goodmovecounts('white', 10, 'share','good'))
+goodmovescw = Features('goodmovescw',MoveFeatures.goodmovecounts('white', -10, 'count','good'))
+goodmovescb = Features('goodmovescb',MoveFeatures.goodmovecounts('white', 10, 'count','good'))
+
+goodmovesw.addtodata()
+goodmovesb.addtodata()
+goodmovescw.addtodata()
+goodmovescb.addtodata()
+
+
+
+
+blundersw = Features('blundersw',MoveFeatures.goodmovecounts('white', -100, 'share','bad'))
+blundersb = Features('blundersb',MoveFeatures.goodmovecounts('white', 100, 'share','bad'))
+blunderscw = Features('blunderscw',MoveFeatures.goodmovecounts('white', -100, 'count','bad'))
+blunderscb = Features('blunderscb',MoveFeatures.goodmovecounts('white', 100, 'count','bad'))
+
+blundersw.addtodata()
+blundersb.addtodata()
+blunderscw.addtodata()
+blunderscb.addtodata()
+
+
+#encode categorical variables (opening and variation)
+
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OneHotEncoder
+le = LabelEncoder()
+ohe = OneHotEncoder(sparse = False)
+
+labelencodedv = le.fit_transform(data1.variation)
+onehotencodedv = ohe.fit_transform(labelencodedv.reshape(-1,1))
+
+labelencodedo = le.fit_transform(data1.opening)
+onehotencodedo = ohe.fit_transform(labelencodedo.reshape(-1,1))
+
+openings = pd.concat([pd.DataFrame(onehotencodedo), pd.DataFrame(onehotencodedv)], axis = 1)
+
+
+
+
+train = matrix.data.loc[:24999,:]
+#train = pd.concat([train, openings.loc[:24999]], axis = 1)
+
+
+#test data 
+X2  = matrix.data.drop(['white', 'black', 'meanElo', 'diffElo','result', 'evals', 'opening', 'variation', 'moves'], axis = 1).loc[25000:,:]
+X2 = pd.concat([X2, openings.loc[25000:]], axis = 1)
+
+#outliers 
+train.drop(labels = [14854,23781],inplace = True)
+train.reset_index(inplace = True, drop = True)
+
+
+
+
+from sklearn.model_selection import cross_val_score
+from sklearn.decomposition import PCA
+from sklearn.metrics import mean_squared_error
+mse  = mean_squared_error
+
+
+
+
+X1= train.drop(labels = train.lengths.loc[(train.lengths<20)].index)
+X1= X1.drop(labels = train.lengths.loc[(train.lengths>300)].index)
+X1.reset_index(inplace = True, drop = True)
+
+
+
+
+y = X1[['white','black']]
+X = X1.drop(['white', 'black', 'meanElo', 'diffElo','result', 'evals', 'opening', 'variation', 'moves'], axis = 1)
+
+X.columns = list(range(len(X.columns)))
+
+#some multicollinearity but not enough to warrant transforming the dataset to pca space
+sns.heatmap(X.corr())
+
+
+pca = PCA()
+
+transformed_X = pd.DataFrame(pca.fit_transform(X))
+
+
+
+x_train = X.loc[ :20000,:]
+x_test = X.loc[20000:,:]
+y_train = y.loc[:20000,:]
+y_test = y.loc[20000:,:]
+
+x_train_transformed = transformed_X.loc[ :20000,:]
+x_test_transformed = transformed_X.loc[20000:,:]
+
+
+
+x_train = pd.DataFrame(RS.fit_transform(x_train))
+x_test = pd.DataFrame(RS.transform(x_test))
+
+
+
+from xgboost import XGBRegressor
+from sklearn.linear_model import ElasticNet
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.ensemble import RandomForestRegressor
+
+xgb = XGBRegressor(max_depth = 4, n_estimators = 500, learning_rate = 0.05)
+
+
+
+
+
+x_train.drop(to_drop, axis = 1, inplace = True)
+x_test.drop(to_drop, axis = 1, inplace = True)
+
+
+en = ElasticNet(alpha = 0,l1_ratio = .1, max_iter = 500)
+ada = AdaBoostRegressor(n_estimators = 250, learning_rate = .05)
+rf = RandomForestRegressor(n_estimators = 250)
+
+
+en.fit(x_train,y_train.white)
+enpreds = en.predict(x_test)
+
+ada.fit(x_train,y_train.white)
+adapreds = ada.predict(x_test)
+
+rf.fit(x_train,y_train.white)
+rfpreds = rf.predict(x_test)
+
+
+xgb.fit(x_train,y_train.white)
+xgbpreds = xgb.predict(x_test)
+
+print('en error is ' + str(np.sqrt(mse(enpreds,y_test.white))))
+
+
+
+print('ada error is ' + str(np.sqrt(mse(adapreds,y_test.white))))
+
+print('rf error is ' + str(np.sqrt(mse(rfpreds,y_test.white))))
+
+print('xgb error is ' + str(np.sqrt(mse(xgbpreds,y_test.white))))
+
+
+en.fit(x_train_transformed,y_train.white)
+enpreds_transformed = en.predict(x_test_transformed)
+
+ada.fit(x_train_transformed,y_train.white)
+adapreds_transformed = ada.predict(x_test_transformed)
+
+rf.fit(x_train_transformed,y_train.white)
+rfpreds_transformed = rf.predict(x_test_transformed)
+
+
+xgb.fit(x_train_transformed,y_train.white)
+xgbpreds_transformed = xgb.predict(x_test_transformed)
+
+
+
+print('en error is ' + str(np.sqrt(mse(enpreds_transformed,y_test.white))))
+
+
+
+print('ada error is ' + str(np.sqrt(mse(adapreds_transformed,y_test.white))))
+
+print('rf error is ' + str(np.sqrt(mse(rfpreds_transformed,y_test.white))))
+
+print('xgb error is ' + str(np.sqrt(mse(xgbpreds_transformed,y_test.white))))
+
+
+
+
+
+
+
+
+#xgb seems to perfom the best 
+
+from xgboost import plot_importance
+
+plot_importance(xgb)
+
+#tried a few times with various numbers of features included, in order of importance, performance best with all features included
+
+#hyperparameter tuning
+
+from sklearn.model_selection import GridSearchCV
+
+params = {'max_depth':[3,4,5,6], 'n_estimators':[50, 100, 250, 500, 750], 'learning_rate':[0.01, 0.05, 0.1]}
+
+
+gscv = GridSearchCV(xgb, param_grid = params, n_jobs = -1, verbose = 1)
+
+gscv.fit(X, y.white)
+
+
+#final preds
+xgbw = XGBRegressor(max_depth = 4, n_estimators = 500, learning_rate = 0.05)
+xgbb = XGBRegressor(max_depth = 4, n_estimators = 500, learning_rate = 0.05)
+X2.columns = list(range(1306))
+
+
+X = pd.DataFrame(RS.fit_transform(X))
+X2 = pd.DataFrame(RS.fit_transform(X2))
+
+
+
+
+xgbw.fit(X,y.white)
+xgbb.fit(X,y.black)
+white_preds = xgbw.predict(X2)
+black_preds = xgbb.predict(X2)
+
+events = list(range(25001,50001))
+intev= []
+for i in events:
+    intev.append(int(i))
+
+preds = pd.concat([pd.Series(events), pd.Series(white_preds), pd.Series(black_preds)], axis = 1 )
+preds.columns = ['Event', 'WhiteElo','BlackElo']
+preds.Event = intev
+
+preds.to_csv('first_preds.csv', index = False)
